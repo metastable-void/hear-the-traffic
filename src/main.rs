@@ -94,7 +94,14 @@ impl DataFetcher {
             // return last 240 samples
             let last_240_samples = values.iter().rev().take(240).rev().cloned().collect::<Vec<f32>>();
 
-            let mut buf: Vec<Complex<f32>> = last_240_samples.iter().map(|&x| Complex::new(x, 0.0)).collect();
+            // 10Gbps
+            let min_max = 10_000_000_000.0;
+
+            let max = last_240_samples.iter().cloned().fold(min_max, f32::max);
+
+            let normalized_samples: Vec<f32> = last_240_samples.iter().map(|&x| x / max).collect();
+
+            let mut buf: Vec<Complex<f32>> = normalized_samples.iter().map(|&x| Complex::new(x, 0.0)).collect();
             self.fft.process(&mut buf);
             let magnitudes: Vec<f32> = buf.iter().map(|c| c.norm()).collect();
             return Ok(magnitudes);
