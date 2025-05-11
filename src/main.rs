@@ -14,8 +14,16 @@ use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 
-const DEFAULT_URL: &str = r#"
+const DEFAULT_QUERY: &str = r#"
 sum(rate(node_network_receive_bytes_total{device=~"en[ops].*"}[30s]))+sum(rate(node_network_transmit_bytes_total{device=~"en[ops].*"}[30s]))
+"#;
+
+const DEFAYLT_QUERY_IN: &str = r#"
+sum(rate(node_network_receive_bytes_total{device=~"en[ops].*"}[30s]))
+"#;
+
+const DEFAULT_QUERY_OUT: &str = r#"
+sum(rate(node_network_transmit_bytes_total{device=~"en[ops].*"}[30s]))
 "#;
 
 fn get_timestamp() -> u64 {
@@ -117,7 +125,13 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or("http://127.0.0.1:9090".to_string());
 
     let prometheus_query = std::env::var("PROMETHEUS_QUERY")
-        .unwrap_or(DEFAULT_URL.trim().to_string());
+        .unwrap_or(DEFAULT_QUERY.trim().to_string());
+
+    let prometheus_query_in = std::env::var("PROMETHEUS_QUERY_IN")
+        .unwrap_or(DEFAYLT_QUERY_IN.trim().to_string());
+
+    let prometheus_query_out = std::env::var("PROMETHEUS_QUERY_OUT")
+        .unwrap_or(DEFAULT_QUERY_OUT.trim().to_string());
 
     let listen_addr: SocketAddr = std::env::var("LISTEN_ADDR")
         .unwrap_or("127.0.0.1:3333".to_string())
@@ -130,9 +144,39 @@ async fn main() -> anyhow::Result<()> {
 
     let data_fetcher = Arc::new(DataFetcher::new(prometheus_url.clone(), prometheus_query.clone()));
 
-    let make_service = move |_req: Request<Incoming>| {
+    let data_fetcher_in = Arc::new(DataFetcher::new(prometheus_url.clone(), prometheus_query_in.clone()));
+    let data_fetcher_out = Arc::new(DataFetcher::new(prometheus_url.clone(), prometheus_query_out.clone()));
+
+    let make_service = move |req: Request<Incoming>| {
         let data_fetcher = data_fetcher.clone();
+        let data_fetcher_in = data_fetcher_in.clone();
+        let data_fetcher_out = data_fetcher_out.clone();
+
         async move {
+            let path = req.uri().path();
+
+            if path == "/stereo" {
+                let in_data = data_fetcher_in.clone().fetch_and_process().await.unwrap_or_else(|_| vec![]);
+                let out_data = data_fetcher_out.clone().fetch_and_process().await.unwrap_or_else(|_| vec![]);
+
+                let data = serde_json::json!({
+                    "in": in_data,
+                    "out": out_data,
+                });
+                let data = serde_json::to_string(&data).unwrap().into_bytes();
+                let mut res = Response::new(Full::new(Bytes::from(data)));
+                *res.status_mut() = hyper::StatusCode::OK;
+                res.headers_mut().append(
+                    "Content-Type",
+                    hyper::header::HeaderValue::from_static("application/json"),
+                );
+                res.headers_mut().append(
+                    "Access-Control-Allow-Origin",
+                    hyper::header::HeaderValue::from_static("*"),
+                );
+                return Ok::<_, Infallible>(res);
+            }
+
             let data = data_fetcher.clone().fetch_and_process().await.unwrap_or_else(|_| vec![]);
             println!("Processed data: {:?}", data);
             let data = serde_json::to_string(&data).unwrap().into_bytes();
