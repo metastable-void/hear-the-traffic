@@ -15,7 +15,7 @@ use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 
 const DEFAULT_URL: &str = r#"
-rate(node_network_receive_bytes_total{device=~"en[ops].*"}[30s])+rate(node_network_transmit_bytes_total{device=~"en[ops].*"}[30s])
+sum(rate(node_network_receive_bytes_total{device=~"en[ops].*"}[30s]))+sum(rate(node_network_transmit_bytes_total{device=~"en[ops].*"}[30s]))
 "#;
 
 fn get_timestamp() -> u64 {
@@ -94,8 +94,8 @@ impl DataFetcher {
             // return last 240 samples
             let last_240_samples = values.iter().rev().take(240).rev().cloned().collect::<Vec<f32>>();
 
-            // 10Gbps
-            let min_max = 10_000_000_000.0;
+            // 1Gbps
+            let min_max = 1_000_000_000.0;
 
             let max = last_240_samples.iter().cloned().fold(min_max, f32::max);
 
